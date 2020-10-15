@@ -1,0 +1,229 @@
+on:
+  push:
+    branches: 
+      - develop/**
+      - dev*
+      - dev/**
+      - dev  
+
+name: Create Tag & Release After Dev Deploy
+
+env:
+  REPOSITORY: "Docker-Images"
+  SERVICE_NAME : "offers"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2.0.0
+
+    - name: Turnstyle
+      uses: softprops/turnstyle@v1
+      with:
+         continue-after-seconds: 500 
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: (GLOBAL) Check out ${{env.REPOSITORY}} repository
+      uses: actions/checkout@master
+      with:
+        token: ${{ secrets.PAT }}
+        repository: ModFi/${{env.REPOSITORY}}
+        path: ${{env.REPOSITORY}}
+        ref: 'master'
+                  
+    - name: (GLOBAL) Debug
+      run: |
+        ls -la
+        ls -la ${{env.REPOSITORY}}
+        echo test, and deploy your project.
+        echo "${{github.ref}}"
+        echo "${{ github.sha }}"
+        echo "Opened: ${{github.event.pull_request.opened}}"
+        echo "Assigned: ${{github.event.pull_request.assigned}}"
+        echo "Review: ${{github.event.pull_request.ready_for_review}}"
+        echo "Review_Requested: ${{github.event.pull_request.review_requested}}"
+        echo "Release Body: ${{github.event.release.body}}"
+        echo "ECS_SERVICE=${{secrets.ECS_SERVICE}}" >> $GITHUB_ENV
+        echo "NPM_TOKEN=${{secrets.NPM_TOKEN_PARAM}}" >> $GITHUB_ENV
+                
+    - name: (GLOBAL) Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+        
+    - name: Get current date
+      id: date
+      run: echo "::set-output name=date::$(date +'v%Y%m%d%S')"
+
+# Dev Assume role        
+    - name: (DEV) Assume role
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+        role-to-assume: arn:aws:iam::${{ secrets.DEV_AWS_ACCOUNT }}:role/Devops-Role
+        role-duration-seconds: 1200
+        role-session-name: GithubActions-Dev
+
+    - name: (DEV) Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+      
+    #- name: (GLOBAL) Define variables
+      #id: Variables
+      #if: github.event.pull_request.opened == true #github.ref == 'refs/heads/develop' || 
+      #run: |	  
+      #  echo "::set-env name=ECS_CLUSTER::${{ secrets.ECS_CLUSTER }}"      
+        
+    - name: (DEV) Build, Test, Tag, Push and Deploy to FARGATE ${{secrets.ECS_SERVICE}}
+      id: Deploy
+      run: |
+        export IMAGE_TAG=$(echo ${{steps.date.outputs.date}} | tr -d '/*/tags')
+        echo "===================================="
+        echo "DEBUG:"
+        echo "ECR_REPOSITORY: ${{ secrets.ECS_SERVICE }}"
+        echo "IMAGE_TAG: $IMAGE_TAG"
+        echo "ECS_SERVICE: ${{secrets.ECS_SERVICE}}"
+        echo "ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}"
+        echo "===================================="
+        #cp -f ${{env.REPOSITORY}}/Dockerfile-example-app Dockerfile
+        #ls -la
+        cat Dockerfile
+        echo "Building Docker Image"
+        echo "===================================="
+        docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG --build-arg NPM_TOKEN_PARAM=$NPM_TOKEN .
+        echo "===================================="
+        echo "Pushing Docker Image"
+        echo "===================================="
+        docker push ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG
+        #echo "::set-env name=DEV_IMAGE::${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG"		
+        echo "===================================="
+        echo "Describe Task definition: ${{secrets.ECS_SERVICE}}"
+        echo "===================================="
+        aws ecs describe-task-definition --task-definition ${{secrets.ECS_SERVICE}} >> "${{secrets.ECS_SERVICE}}.json"
+        export NEW_IMAGE_TAG="${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG"
+        cat ${{secrets.ECS_SERVICE}}.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities)' >> APP.json
+        wget https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
+        chmod +x ./jq-linux64
+        sudo cp -f jq-linux64 /usr/bin/jq
+        aws ssm get-parameters-by-path --path /modfi --query "Parameters[*].{name:Name,valueFrom:ARN}" | /usr/bin/jq -c --arg replace /modfi/ 'walk(if type == "object" and has("name") then .name |= gsub($replace;"") else . end)' > SECRETS
+        cat APP.json | jq 'del(.containerDefinitions[0].secrets)' > json2
+        rm -f APP.json              
+        jq --argjson groupInfo "$(cat SECRETS)" '.containerDefinitions[0].secrets += $groupInfo' json2 >> APP.json        
+        echo "===================================="
+        echo "Registering Task definition"
+        echo "===================================="
+        PORT=$(cat ${{secrets.ECS_SERVICE}}.json | jq .taskDefinition.containerDefinitions[0].portMappings[0].containerPort)
+        NEW_TASK_INFO=$(aws ecs register-task-definition --region $AWS_DEFAULT_REGION --family ${{secrets.ECS_SERVICE}} --cli-input-json file://APP.json)
+        NEW_REVISION=$(echo $NEW_TASK_INFO | jq '.taskDefinition.revision')
+        echo "===================================="
+        echo "Updating service / CodeDeploy run"
+        echo "===================================="
+        #echo "ECS_SERVICE=${{secrets.ECS_SERVICE}}" >> $GITHUB_ENV
+        aws deploy create-deployment --application-name ${{secrets.ECS_SERVICE}} --deployment-group-name ${ECS_SERVICE}-dg \
+        --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "{\"version\": 1, \"Resources\": [{\"TargetService\": {\"Type\": \"AWS::ECS::Service\", \"Properties\": {\"TaskDefinition\": \"'arn:aws:ecs:${AWS_DEFAULT_REGION}:${{secrets.DEV_AWS_ACCOUNT}}:task-definition/${{ secrets.ECS_SERVICE }}:${NEW_REVISION}'\", \"LoadBalancerInfo\": {\"ContainerName\": \"'${{ secrets.ECS_SERVICE }}'\", \"ContainerPort\": \"'${PORT}'\"}}}}],\"Hooks\": [{\"AfterAllowTestTraffic\": \"'${{ secrets.ECS_SERVICE }}-AfterAllowTestTraffic'\"}]}"}}' \
+        --query deploymentId >> ID
+        sleep 10
+        aws deploy wait deployment-successful --deployment-id $(cat ID | sed 's|"||g')
+        #aws ecs update-service --region $AWS_DEFAULT_REGION --cluster ${{ secrets.ECS_CLUSTER }} --service ${{secrets.ECS_SERVICE}} --force-new-deployment --task-definition ${{ secrets.ECS_SERVICE }}:${NEW_REVISION}
+        #echo "===================================="
+        #echo "Describing Task definition"
+        #echo "===================================="
+        #cat ${{secrets.ECS_SERVICE}}.json
+# Qa Assume role        
+    - name: (QA) Assume role
+      uses: aws-actions/configure-aws-credentials@v1
+      #if: github.event_name == 'release' && contains(github.event.release.body, 'Deploy-to')
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+        role-to-assume: arn:aws:iam::${{ secrets.QA_AWS_ACCOUNT }}:role/Devops-Role
+        role-duration-seconds: 1200
+        role-session-name: GithubActions-Qa 
+
+    - name: (QA) Login to Amazon ECR
+      id: login-ecr-qa
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: (QA) Push Image to ECR
+      id: Deploy-to-qa
+      #if: github.event_name == 'release' && github.event.action == 'created' && github.event.release.body == 'Deploy-to-Dev'
+      run: |
+        export IMAGE_TAG=$(echo ${{steps.date.outputs.date}} | tr -d '/*/tags')
+        echo "===================================="
+        echo "DEBUG:"
+        echo "ECR_REPOSITORY: ${{ secrets.ECS_SERVICE }}"
+        echo "IMAGE_TAG: $IMAGE_TAG"
+        echo "DEV_IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG"		
+        echo "===================================="
+        echo "Pushing Docker Image"
+        echo "===================================="
+        docker tag ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG ${{ steps.login-ecr-qa.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG 	
+        docker push ${{ steps.login-ecr-qa.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG    		
+# Prod Assume role        
+    - name: (PROD) Assume role
+      uses: aws-actions/configure-aws-credentials@v1
+      #if: github.event_name == 'release' && contains(github.event.release.body, 'Deploy-to')
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+        role-to-assume: arn:aws:iam::${{ secrets.PROD_AWS_ACCOUNT }}:role/Devops-Role
+        role-duration-seconds: 1200
+        role-session-name: GithubActions-Prod  
+
+    - name: (PROD) Login to Amazon ECR 
+      id: login-ecr-prod
+      uses: aws-actions/amazon-ecr-login@v1
+      
+    - name: (PROD) Push Image to ECR
+      id: Deploy-to-prod
+      #if: github.event_name == 'release' && github.event.action == 'created' && github.event.release.body == 'Deploy-to-Dev'
+      run: |
+        export IMAGE_TAG=$(echo ${{steps.date.outputs.date}} | tr -d '/*/tags')
+        echo "===================================="
+        echo "DEBUG:"
+        echo "ECR_REPOSITORY: ${{ secrets.ECS_SERVICE }}"
+        echo "IMAGE_TAG: $IMAGE_TAG"
+        echo "DEV_IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG"		
+        echo "===================================="
+        echo "Pushing Docker Image"
+        echo "===================================="
+        docker tag ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG ${{ steps.login-ecr-prod.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG 	
+        docker push ${{ steps.login-ecr-prod.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG
+    - name: Tag snapshot - ${{ steps.date.outputs.date }}
+      uses: tvdias/github-tagger@v0.0.1
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        tag: ${{ steps.date.outputs.date }}
+
+    - name: Checkout code
+      uses: actions/checkout@v2
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+      with:
+        tag_name: ${{ steps.date.outputs.date }}
+        release_name: Release ${{ steps.date.outputs.date }}
+        body: |
+          Deployed Image & Service Updated on Dev
+          Deployed Image on Qa & Prod
+        draft: false
+        prerelease: true
+
+    #- name: Slack Notification
+    #  uses: rtCamp/action-slack-notify@master
+    #  env:
+    #    SLACK_CHANNEL: modfi_software
+    #    SLACK_COLOR: '#3278BD'
+    #    SLACK_MESSAGE: 'Application Builded & Deployed to Dev'
+    #    SLACK_TITLE: Information
+    #    SLACK_USERNAME: Github-CICD
+    #    SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}

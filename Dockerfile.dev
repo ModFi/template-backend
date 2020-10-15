@@ -1,0 +1,26 @@
+FROM node:alpine AS builder
+WORKDIR /usr/modfi/app
+COPY .npmrc package*.json ./
+ARG NPM_TOKEN_PARAM
+ENV NPM_TOKEN=$NPM_TOKEN_PARAM
+COPY .npmrc ./ 
+RUN echo "//npm.pkg.github.com/:_authToken=$NPM_TOKEN" >> .npmrc && \
+    npm install
+COPY . .
+RUN ./node_modules/.bin/tsc
+
+FROM node:alpine
+WORKDIR /usr/modfi/app
+ARG NPM_TOKEN_PARAM
+ENV NPM_TOKEN=$NPM_TOKEN_PARAM
+COPY .npmrc package*.json ./
+COPY --from=builder /usr/modfi/app/dist dist
+COPY ./docs/api/v1 ./docs/api/v1
+RUN echo "//npm.pkg.github.com/:_authToken=$NPM_TOKEN" >> .npmrc && \
+    npm install --production 
+RUN addgroup -S modfi && adduser -S modfi -G modfi
+RUN chown -R modfi:modfi ./*
+RUN chown -R modfi:modfi .
+USER modfi
+EXPOSE 3000
+CMD [ "node", "dist/index.js" ]

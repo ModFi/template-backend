@@ -1,0 +1,177 @@
+name: Update Service From Release - From script
+
+on:
+  repository_dispatch:
+    types: ["trigger-event"]
+    
+env:
+  GIT-REF: ${{ github.event.client_payload.git-ref }}
+  REPOSITORY: "Docker-Images"
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2.0.0
+      with:
+        ref: ${{ github.event.client_payload.git-ref }}
+
+    - name: (GLOBAL) Check out ${{env.REPOSITORY}} repository
+      uses: actions/checkout@master
+      with:
+        token: ${{ secrets.PAT }}
+        repository: ModFi/${{env.REPOSITORY}}
+        path: ${{env.REPOSITORY}}
+        ref: 'master'
+                  
+    - name: (GLOBAL) Debug
+      run: |
+        ls -la
+        ls -la ${{env.REPOSITORY}}
+        echo test, and deploy your project.
+        echo "${{github.ref}}"
+        echo "${{ github.sha }}"
+        echo "Opened: ${{github.event.pull_request.opened}}"
+        echo "Assigned: ${{github.event.pull_request.assigned}}"
+        echo "Review: ${{github.event.pull_request.ready_for_review}}"
+        echo "Review_Requested: ${{github.event.pull_request.review_requested}}"
+        echo "Release Body: ${{github.event.release.body}}"
+        echo "Tag ${{ github.event.inputs.git-ref }}"
+                
+    - name: (GLOBAL) Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+    - name: (GLOBAL) Define variables
+      id: Variables 
+      run: |	  
+        echo "::set-env name=ECR_REPOSITORY::${{ secrets.ECS_SERVICE }}"
+        echo "::set-env name=ECS_SERVICE::${{ secrets.ECS_SERVICE }}"
+        echo "::set-env name=ECS_CLUSTER::${{ secrets.ECS_CLUSTER }}"
+        echo "::set-env name=GIT_TAG::${{ github.event.client_payload.git-ref }}"      
+# Qa Assume role        
+    - name: (QA) Assume role
+      uses: aws-actions/configure-aws-credentials@v1
+      if: contains(github.event.client_payload.Environment, 'Qa')
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+        role-to-assume: arn:aws:iam::${{ secrets.QA_AWS_ACCOUNT }}:role/Devops-Role
+        role-duration-seconds: 1200
+        role-session-name: GithubActions-Qa
+
+    - name: (QA) Login to Amazon ECR
+      id: login-ecr-qa
+      if: contains(github.event.client_payload.Environment, 'Qa')
+      uses: aws-actions/amazon-ecr-login@v1        
+
+    - name: (QA) Deploy to FARGATE ${{secrets.ECS_SERVICE}}
+      id: Deploy-image-qa
+      if: contains(github.event.client_payload.Environment, 'Qa')
+      run: |
+        export IMAGE_TAG=$(echo $GIT_TAG)
+        echo "===================================="
+        echo "DEBUG:"
+        echo "ECR_REPOSITORY: $ECR_REPOSITORY"
+        echo "IMAGE_TAG: $IMAGE_TAG"
+        echo "ECS_SERVICE: $ECS_SERVICE"
+        echo "ECS_CLUSTER: $ECS_CLUSTER"
+        echo "===================================="
+        echo "Describe Task definition: $ECS_SERVICE"
+        echo "===================================="
+        aws ecs describe-task-definition --task-definition $ECS_SERVICE >> "$ECS_SERVICE.json"
+        export NEW_IMAGE_TAG="${{ steps.login-ecr-qa.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG"
+        cat $ECS_SERVICE.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities)' >> APP.json
+        cat APP.json
+        echo "===================================="
+        echo "Registering Task definition"
+        echo "===================================="
+        PORT=$(cat $ECS_SERVICE.json | jq .taskDefinition.containerDefinitions[0].portMappings[0].containerPort)
+        NEW_TASK_INFO=$(aws ecs register-task-definition --region $AWS_DEFAULT_REGION --family $ECS_SERVICE --cli-input-json file://APP.json)
+        NEW_REVISION=$(echo $NEW_TASK_INFO | jq '.taskDefinition.revision')
+        echo "===================================="
+        echo "Updating service / CodeDeploy run"
+        echo "===================================="
+        #aws ecs update-service --region $AWS_DEFAULT_REGION --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment --task-definition ${ECS_SERVICE}:${NEW_REVISION}
+        aws deploy create-deployment \
+        --application-name ${ECS_SERVICE} \
+        --deployment-group-name ${ECS_SERVICE}-dg \
+        --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "{\"version\": 1, \"Resources\": [{\"TargetService\": {\"Type\": \"AWS::ECS::Service\", \"Properties\": {\"TaskDefinition\": \"'arn:aws:ecs:${AWS_DEFAULT_REGION}:${{secrets.QA_AWS_ACCOUNT}}:task-definition/${ECS_SERVICE}:${NEW_REVISION}'\", \"LoadBalancerInfo\": {\"ContainerName\": \"'${ECS_SERVICE}'\", \"ContainerPort\": \"'${PORT}'\"}}}}],\"Hooks\": [{\"AfterAllowTestTraffic\": \"'${ECS_SERVICE}-AfterAllowTestTraffic'\"}]}"}}' \
+        --query deploymentId >> ID
+        sleep 10
+        aws deploy wait deployment-successful --deployment-id $(cat ID | sed 's|"||g') 
+        #echo "===================================="
+        #echo "Describing Task definition"
+        #echo "===================================="
+        #cat $ECS_SERVICE.json
+# Prod Assume role        
+    - name: (PROD) Assume role
+      uses: aws-actions/configure-aws-credentials@v1
+      if: contains(github.event.client_payload.Environment, 'Prod')
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+        role-to-assume: arn:aws:iam::${{ secrets.PROD_AWS_ACCOUNT }}:role/Devops-Role
+        role-duration-seconds: 1200
+        role-session-name: GithubActions-Prod
+
+    - name: (PROD) Login to Amazon ECR 
+      id: login-ecr-prod
+      if: contains(github.event.client_payload.Environment, 'Prod')
+      uses: aws-actions/amazon-ecr-login@v1      
+
+    - name: (PROD) Deploy to FARGATE ${{secrets.ECS_SERVICE}}
+      id: Deploy-image-prod
+      if: contains(github.event.client_payload.Environment, 'Prod')
+      run: |
+        export IMAGE_TAG=$(echo $GIT_TAG)
+        echo "===================================="
+        echo "DEBUG:"
+        echo "ECR_REPOSITORY: $ECR_REPOSITORY"
+        echo "IMAGE_TAG: $IMAGE_TAG"
+        echo "ECS_SERVICE: $ECS_SERVICE"
+        echo "ECS_CLUSTER: $ECS_CLUSTER"
+        echo "AWS_ACCOUNT: $PROD_AWS_ACCOUNT"
+        echo "===================================="
+        echo "Describe Task definition: $ECS_SERVICE"
+        echo "===================================="
+        aws ecs describe-task-definition --task-definition $ECS_SERVICE >> "$ECS_SERVICE.json"
+        export NEW_IMAGE_TAG="${{ steps.login-ecr-qa.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG"
+        cat $ECS_SERVICE.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities)' >> APP.json
+        cat APP.json
+        echo "===================================="
+        echo "Registering Task definition"
+        echo "===================================="
+        PORT=$(cat $ECS_SERVICE.json | jq .taskDefinition.containerDefinitions[0].portMappings[0].containerPort)		
+        NEW_TASK_INFO=$(aws ecs register-task-definition --region $AWS_DEFAULT_REGION --family $ECS_SERVICE --cli-input-json file://APP.json)
+        NEW_REVISION=$(echo $NEW_TASK_INFO | jq '.taskDefinition.revision')
+        echo "===================================="
+        echo "Updating service / CodeDeploy run"
+        echo "===================================="
+        aws deploy create-deployment \
+        --application-name ${ECS_SERVICE} \
+        --deployment-group-name ${ECS_SERVICE}-dg \
+        --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "{\"version\": 1, \"Resources\": [{\"TargetService\": {\"Type\": \"AWS::ECS::Service\", \"Properties\": {\"TaskDefinition\": \"'arn:aws:ecs:${AWS_DEFAULT_REGION}:${{secrets.PROD_AWS_ACCOUNT}}:task-definition/${ECS_SERVICE}:${NEW_REVISION}'\", \"LoadBalancerInfo\": {\"ContainerName\": \"'${ECS_SERVICE}'\", \"ContainerPort\": \"'${PORT}'\"}}}}],\"Hooks\": [{\"AfterAllowTestTraffic\": \"'${ECS_SERVICE}-AfterAllowTestTraffic'\"}]}"}}' \
+        --query deploymentId	>> ID
+        sleep 10
+        aws deploy wait deployment-successful --deployment-id $(cat ID | sed 's|"||g')	
+        #aws ecs update-service --region $AWS_DEFAULT_REGION --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment --task-definition ${ECS_SERVICE}:${NEW_REVISION}
+        #echo "===================================="
+        #echo "Describing Task definition"
+        #echo "===================================="
+        #cat $ECS_SERVICE.json
+    #- name: Slack Notification
+    #  uses: rtCamp/action-slack-notify@master
+    #  env:
+    #    SLACK_CHANNEL: modfi_software
+    #    SLACK_COLOR: '#3278BD'
+    #    SLACK_MESSAGE: '${{github.event.release.body}} Status: OK'
+    #    SLACK_TITLE: Information
+    #    SLACK_USERNAME: Github-CICD
+    #    SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
