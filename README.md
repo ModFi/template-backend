@@ -10,6 +10,10 @@ If the application serves the purpose to be a backend-repository please remove
 from the .github/workflows/ directory all the files that start with front
 and remove the scripts/ directory and Dockerfile.frontend as well
 
+### Shared Modfi Library
+
+https://github.com/ModFi/backend-utils
+
 ## Frontend Only
 Otherwise remove the files that start with app_ on .github/workflows/ directory
 
