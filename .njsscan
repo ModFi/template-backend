@@ -1,0 +1,13 @@
+---
+- nodejs-extensions:
+  - .js
+
+  ignore-filenames:
+  - .npmrc
+  - Makefile
+  - .editorconfig
+  - .njsscan
+  - .eslintignore
+  - Dockerfile
+  - Dockerfile.dev
+

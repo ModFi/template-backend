@@ -1,13 +1,22 @@
 FROM node:alpine AS builder
 WORKDIR /usr/modfi/app
-COPY .npmrc package*.json ./
+COPY .npmrc package*.json .njsscan ./
 ARG NPM_TOKEN_PARAM
 ENV NPM_TOKEN=$NPM_TOKEN_PARAM
 COPY .npmrc ./ 
 RUN echo "//npm.pkg.github.com/:_authToken=$NPM_TOKEN" >> .npmrc && \
-    npm install
+    npm install && \
+    npm install -g retire && \
+    retire
 COPY . .
 RUN ./node_modules/.bin/tsc
+
+FROM python:3.7-alpine
+WORKDIR /usr/modfi/app
+RUN pip install njsscan==0.1.5 && \
+    apk --no-cache add git ca-certificates gcc libc-dev npm
+COPY --chown=root:root --from=builder /usr/modfi/app /usr/modfi/app
+RUN njsscan --json --missing-controls /usr/modfi/app
 
 FROM node:alpine
 WORKDIR /usr/modfi/app
@@ -17,7 +26,7 @@ COPY .npmrc package*.json ./
 COPY --from=builder /usr/modfi/app/dist dist
 COPY ./docs/api/v1 ./docs/api/v1
 RUN echo "//npm.pkg.github.com/:_authToken=$NPM_TOKEN" >> .npmrc && \
-    npm install --production 
+    npm install --production
 RUN addgroup -S modfi && adduser -S modfi -G modfi
 RUN chown -R modfi:modfi ./*
 RUN chown -R modfi:modfi .
