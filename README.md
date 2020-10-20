@@ -17,6 +17,9 @@ https://github.com/ModFi/backend-utils
 ## Frontend Only
 Otherwise remove the files that start with app_ on .github/workflows/ directory
 
+## See [Github Actions & Environment Status](https://github.com/ModFi/action-dashboard)
+Where you find out all the status of the services and their version
+
 ## Useful Links to read
 
 [How to start working on a new service](https://modfi.atlassian.net/wiki/spaces/AR/pages/235470855/How+start+working+on+a+new+Service+Api)
