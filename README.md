@@ -10,6 +10,9 @@ If the application serves the purpose to be a backend-repository please remove
 from the .github/workflows/ directory all the files that start with front
 and remove the scripts/ directory and Dockerfile.frontend as well
 
+#### IMPORTANT !!!
+Do not delete the branchs until you know that its not going to be deployed on Qa/Prod environments because it delete the Release Tag too.
+
 ### Shared Modfi Library
 
 https://github.com/ModFi/backend-utils
