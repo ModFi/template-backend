@@ -12,9 +12,6 @@ on:
         required: true
   release:
     types: [created]
-            
-env:
-  REPOSITORY: "Docker-Images"
 
 jobs:
   init:
@@ -24,28 +21,7 @@ jobs:
     - uses: actions/checkout@v2.0.0
       with:
         ref: ${{ github.event.inputs.git-ref }}
-
-    - name: (GLOBAL) Check out ${{env.REPOSITORY}} repository
-      uses: actions/checkout@master
-      with:
-        token: ${{ secrets.PAT }}
-        repository: ModFi/${{env.REPOSITORY}}
-        path: ${{env.REPOSITORY}}
-        ref: 'master'
                   
-    - name: (GLOBAL) Debug
-      run: |
-        ls -la
-        ls -la ${{env.REPOSITORY}}
-        echo test, and deploy your project.
-        echo "${{github.ref}}"
-        echo "${{ github.sha }}"
-        echo "Opened: ${{github.event.pull_request.opened}}"
-        echo "Assigned: ${{github.event.pull_request.assigned}}"
-        echo "Review: ${{github.event.pull_request.ready_for_review}}"
-        echo "Review_Requested: ${{github.event.pull_request.review_requested}}"
-        echo "Release Body: ${{github.event.release.body}}"
-        echo "Tag ${{ github.event.inputs.git-ref }}"
                 
     - name: (GLOBAL) Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
@@ -58,10 +34,11 @@ jobs:
       id: Variables
       #if: github.event.pull_request.opened == true #github.ref == 'refs/heads/develop' || 
       run: |	  
-        echo "::set-env name=ECR_REPOSITORY::${{ secrets.ECS_SERVICE }}"
-        echo "::set-env name=ECS_SERVICE::${{ secrets.ECS_SERVICE }}"
-        echo "::set-env name=ECS_CLUSTER::${{ secrets.ECS_CLUSTER }}"
-        echo "::set-env name=GIT_TAG::${{ github.event.inputs.git-ref }}"      
+        echo "ECS_CLUSTER=${{secrets.ECS_CLUSTER}}" >> $GITHUB_ENV
+        echo "GIT_TAG=${{github.event.inputs.git-ref}}" >> $GITHUB_ENV
+        echo "ECS_SERVICE=${{secrets.ECS_SERVICE}}" >> $GITHUB_ENV
+        echo "ECR_REPOSITORY=${{secrets.ECS_SERVICE}}" >> $GITHUB_ENV
+        echo "NPM_TOKEN=${{secrets.NPM_TOKEN_PARAM}}" >> $GITHUB_ENV      
 
 # Qa Assume role        
     - name: (QA) Assume role
@@ -84,41 +61,43 @@ jobs:
       id: Deploy-image-qa
       if: contains(github.event.inputs.Environment, 'Qa')
       run: |
-        export IMAGE_TAG=$(echo $GIT_TAG)
         echo "===================================="
         echo "DEBUG:"
-        echo "ECR_REPOSITORY: $ECR_REPOSITORY"
+        echo "ECR_REPOSITORY: ${ECS_SERVICE}"
         echo "IMAGE_TAG: $IMAGE_TAG"
-        echo "ECS_SERVICE: $ECS_SERVICE"
-        echo "ECS_CLUSTER: $ECS_CLUSTER"
+        echo "ECS_SERVICE: ${ECS_SERVICE}"
+        echo "ECS_CLUSTER: ${ECS_CLUSTER}"
         echo "===================================="
-        echo "Describe Task definition: $ECS_SERVICE"
+        echo "Describe Task definition: ${ECS_SERVICE}"
         echo "===================================="
-        aws ecs describe-task-definition --task-definition $ECS_SERVICE >> "$ECS_SERVICE.json"
-        export NEW_IMAGE_TAG="${{ steps.login-ecr-qa.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG"
-        cat $ECS_SERVICE.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities)' >> APP.json
-        cat APP.json
+        aws ecs describe-task-definition --task-definition ${ECS_SERVICE} >> "${ECS_SERVICE}.json"
+        export NEW_IMAGE_TAG="${{ steps.login-ecr-qa.outputs.registry }}/${ECS_SERVICE}:$IMAGE_TAG"
+        cat ${ECS_SERVICE}.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities)' >> APP.json
+        wget https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
+        chmod +x ./jq-linux64
+        sudo cp -f jq-linux64 /usr/bin/jq
+        aws ssm get-parameters-by-path --path /modfi --query "Parameters[*].{name:Name,valueFrom:ARN}" | /usr/bin/jq -c --arg replace /modfi/ 'walk(if type == "object" and has("name") then .name |= gsub($replace;"") else . end)' > SECRETS
+        cat APP.json | jq 'del(.containerDefinitions[0].secrets)' > json2
+        rm -f APP.json              
+        jq --argjson groupInfo "$(cat SECRETS)" '.containerDefinitions[0].secrets += $groupInfo' json2 >> APP.json        
         echo "===================================="
         echo "Registering Task definition"
         echo "===================================="
-        PORT=$(cat $ECS_SERVICE.json | jq .taskDefinition.containerDefinitions[0].portMappings[0].containerPort)
-        NEW_TASK_INFO=$(aws ecs register-task-definition --region $AWS_DEFAULT_REGION --family $ECS_SERVICE --cli-input-json file://APP.json)
+        PORT=$(cat ${ECS_SERVICE}.json | jq .taskDefinition.containerDefinitions[0].portMappings[0].containerPort)
+        NEW_TASK_INFO=$(aws ecs register-task-definition --region $AWS_DEFAULT_REGION --family ${ECS_SERVICE} --cli-input-json file://APP.json)
         NEW_REVISION=$(echo $NEW_TASK_INFO | jq '.taskDefinition.revision')
         echo "===================================="
         echo "Updating service / CodeDeploy run"
         echo "===================================="
-        #aws ecs update-service --region $AWS_DEFAULT_REGION --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment --task-definition ${ECS_SERVICE}:${NEW_REVISION}
-        aws deploy create-deployment \
-        --application-name ${ECS_SERVICE} \
-        --deployment-group-name ${ECS_SERVICE}-dg \
-        --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "{\"version\": 1, \"Resources\": [{\"TargetService\": {\"Type\": \"AWS::ECS::Service\", \"Properties\": {\"TaskDefinition\": \"'arn:aws:ecs:${AWS_DEFAULT_REGION}:${{secrets.QA_AWS_ACCOUNT}}:task-definition/${ECS_SERVICE}:${NEW_REVISION}'\", \"LoadBalancerInfo\": {\"ContainerName\": \"'${ECS_SERVICE}'\", \"ContainerPort\": \"'${PORT}'\"}}}}],\"Hooks\": [{\"AfterAllowTestTraffic\": \"'${ECS_SERVICE}-AfterAllowTestTraffic'\"}]}"}}' \
+        aws deploy create-deployment --application-name ${ECS_SERVICE} --deployment-group-name ${ECS_SERVICE}-dg \
+        --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "{\"version\": 1, \"Resources\": [{\"TargetService\": {\"Type\": \"AWS::ECS::Service\", \"Properties\": {\"TaskDefinition\": \"'arn:aws:ecs:${AWS_DEFAULT_REGION}:${{secrets.DEV_AWS_ACCOUNT}}:task-definition/${ECS_SERVICE}:${NEW_REVISION}'\", \"LoadBalancerInfo\": {\"ContainerName\": \"'${ECS_SERVICE}'\", \"ContainerPort\": \"'${PORT}'\"}}}}],\"Hooks\": [{\"AfterAllowTestTraffic\": \"'${ECS_SERVICE}-AfterAllowTestTraffic'\"}]}"}}' \
         --query deploymentId >> ID
         sleep 10
         aws deploy wait deployment-successful --deployment-id $(cat ID | sed 's|"||g')
         #echo "===================================="
         #echo "Describing Task definition"
         #echo "===================================="
-        #cat $ECS_SERVICE.json
+        #cat ${ECS_SERVICE}.json
 
 # Prod Assume role        
     - name: (PROD) Assume role
@@ -141,42 +120,47 @@ jobs:
       id: Deploy-image-prod
       if: contains(github.event.inputs.Environment, 'Prod')
       run: |
-        export IMAGE_TAG=$(echo $GIT_TAG)
         echo "===================================="
         echo "DEBUG:"
-        echo "ECR_REPOSITORY: $ECR_REPOSITORY"
+        echo "ECR_REPOSITORY: ${ECS_SERVICE}"
         echo "IMAGE_TAG: $IMAGE_TAG"
-        echo "ECS_SERVICE: $ECS_SERVICE"
-        echo "ECS_CLUSTER: $ECS_CLUSTER"
-        echo "AWS_ACCOUNT: $PROD_AWS_ACCOUNT"
+        echo "ECS_SERVICE: ${ECS_SERVICE}"
+        echo "ECS_CLUSTER: ${ECS_CLUSTER}"
         echo "===================================="
-        echo "Describe Task definition: $ECS_SERVICE"
+        echo "Pushing Docker Image"
         echo "===================================="
-        aws ecs describe-task-definition --task-definition $ECS_SERVICE >> "$ECS_SERVICE.json"
-        export NEW_IMAGE_TAG="${{ steps.login-ecr-qa.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG"
-        cat $ECS_SERVICE.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities)' >> APP.json
-        cat APP.json
+        #docker push ${{ steps.login-ecr-prod.outputs.registry }}/${ECS_SERVICE}:$IMAGE_TAG		
+        echo "===================================="
+        echo "Describe Task definition: ${ECS_SERVICE}"
+        echo "===================================="
+        aws ecs describe-task-definition --task-definition ${ECS_SERVICE} >> "${ECS_SERVICE}.json"
+        export NEW_IMAGE_TAG="${{ steps.login-ecr-prod.outputs.registry }}/${ECS_SERVICE}:$IMAGE_TAG"
+        cat ${ECS_SERVICE}.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities)' >> APP.json
+        wget https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
+        chmod +x ./jq-linux64
+        sudo cp -f jq-linux64 /usr/bin/jq
+        aws ssm get-parameters-by-path --path /modfi --query "Parameters[*].{name:Name,valueFrom:ARN}" | /usr/bin/jq -c --arg replace /modfi/ 'walk(if type == "object" and has("name") then .name |= gsub($replace;"") else . end)' > SECRETS
+        cat APP.json | jq 'del(.containerDefinitions[0].secrets)' > json2
+        rm -f APP.json              
+        jq --argjson groupInfo "$(cat SECRETS)" '.containerDefinitions[0].secrets += $groupInfo' json2 >> APP.json        
         echo "===================================="
         echo "Registering Task definition"
         echo "===================================="
-        PORT=$(cat $ECS_SERVICE.json | jq .taskDefinition.containerDefinitions[0].portMappings[0].containerPort)		
-        NEW_TASK_INFO=$(aws ecs register-task-definition --region $AWS_DEFAULT_REGION --family $ECS_SERVICE --cli-input-json file://APP.json)
+        PORT=$(cat ${ECS_SERVICE}.json | jq .taskDefinition.containerDefinitions[0].portMappings[0].containerPort)
+        NEW_TASK_INFO=$(aws ecs register-task-definition --region $AWS_DEFAULT_REGION --family ${ECS_SERVICE} --cli-input-json file://APP.json)
         NEW_REVISION=$(echo $NEW_TASK_INFO | jq '.taskDefinition.revision')
         echo "===================================="
         echo "Updating service / CodeDeploy run"
         echo "===================================="
-        aws deploy create-deployment \
-        --application-name ${ECS_SERVICE} \
-        --deployment-group-name ${ECS_SERVICE}-dg \
-        --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "{\"version\": 1, \"Resources\": [{\"TargetService\": {\"Type\": \"AWS::ECS::Service\", \"Properties\": {\"TaskDefinition\": \"'arn:aws:ecs:${AWS_DEFAULT_REGION}:${{secrets.PROD_AWS_ACCOUNT}}:task-definition/${ECS_SERVICE}:${NEW_REVISION}'\", \"LoadBalancerInfo\": {\"ContainerName\": \"'${ECS_SERVICE}'\", \"ContainerPort\": \"'${PORT}'\"}}}}],\"Hooks\": [{\"AfterAllowTestTraffic\": \"'${ECS_SERVICE}-AfterAllowTestTraffic'\"}]}"}}' \
+        aws deploy create-deployment --application-name ${ECS_SERVICE} --deployment-group-name ${ECS_SERVICE}-dg \
+        --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "{\"version\": 1, \"Resources\": [{\"TargetService\": {\"Type\": \"AWS::ECS::Service\", \"Properties\": {\"TaskDefinition\": \"'arn:aws:ecs:${AWS_DEFAULT_REGION}:${{secrets.DEV_AWS_ACCOUNT}}:task-definition/${ECS_SERVICE}:${NEW_REVISION}'\", \"LoadBalancerInfo\": {\"ContainerName\": \"'${ECS_SERVICE}'\", \"ContainerPort\": \"'${PORT}'\"}}}}],\"Hooks\": [{\"AfterAllowTestTraffic\": \"'${ECS_SERVICE}-AfterAllowTestTraffic'\"}]}"}}' \
         --query deploymentId >> ID
         sleep 10
-        aws deploy wait deployment-successful --deployment-id $(cat ID | sed 's|"||g')		
-        #aws ecs update-service --region $AWS_DEFAULT_REGION --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment --task-definition ${ECS_SERVICE}:${NEW_REVISION}
+        aws deploy wait deployment-successful --deployment-id $(cat ID | sed 's|"||g')
         #echo "===================================="
         #echo "Describing Task definition"
         #echo "===================================="
-        #cat $ECS_SERVICE.json
+        #cat ${ECS_SERVICE}.json
 
     #- name: Slack Notification
     #  uses: rtCamp/action-slack-notify@master
