@@ -35,7 +35,7 @@ jobs:
       #if: github.event.pull_request.opened == true #github.ref == 'refs/heads/develop' || 
       run: |	  
         echo "ECS_CLUSTER=${{secrets.ECS_CLUSTER}}" >> $GITHUB_ENV
-        echo "GIT_TAG=${{github.event.inputs.git-ref}}" >> $GITHUB_ENV
+        echo "IMAGE_TAG=${{github.event.inputs.git-ref}}" >> $GITHUB_ENV
         echo "ECS_SERVICE=${{secrets.ECS_SERVICE}}" >> $GITHUB_ENV
         echo "ECR_REPOSITORY=${{secrets.ECS_SERVICE}}" >> $GITHUB_ENV
         echo "NPM_TOKEN=${{secrets.NPM_TOKEN_PARAM}}" >> $GITHUB_ENV      
