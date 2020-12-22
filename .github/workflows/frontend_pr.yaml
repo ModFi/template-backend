@@ -1,0 +1,29 @@
+on:
+  pull_request:
+    types: [assigned, opened, synchronize, reopened] 
+
+name: Pull request checks
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+            
+    steps:
+    - uses: actions/checkout@v2.0.0
+    
+    - name: Turnstyle
+      uses: softprops/turnstyle@v1
+      with:
+         continue-after-seconds: 1500 
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                                            
+    - uses: actions/checkout@v2
+    - name: Use Node.js
+      uses: actions/setup-node@v1
+      with:
+        node-version: '12.7'
+    - run: npm install
+    - run: npm install -g ng-cli
+    - run: npm run lint
+    - run: npm run build
