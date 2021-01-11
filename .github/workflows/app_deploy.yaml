@@ -77,9 +77,11 @@ jobs:
         chmod +x ./jq-linux64
         sudo cp -f jq-linux64 /usr/bin/jq
         aws ssm get-parameters-by-path --path /modfi --query "Parameters[*].{name:Name,valueFrom:ARN}" | /usr/bin/jq -c --arg replace /modfi/ 'walk(if type == "object" and has("name") then .name |= gsub($replace;"") else . end)' > SECRETS
+        aws ssm get-parameters-by-path --path /${ECS_SERVICE} --query "Parameters[*].{name:Name,valueFrom:ARN}" | jq -c --arg replace /${ECS_SERVICE}/ 'walk(if type == "object" and has("name") then .name |= gsub($replace;"") else . end)' > SECRETS${ECS_SERVICE}
         cat APP.json | jq 'del(.containerDefinitions[0].secrets)' > json2
         rm -f APP.json              
-        jq --argjson groupInfo "$(cat SECRETS)" '.containerDefinitions[0].secrets += $groupInfo' json2 >> APP.json        
+        jq --argjson groupInfo "$(cat SECRETS)" '.containerDefinitions[0].secrets += $groupInfo' json2 >> APP${ECS_SERVICE}.json
+        jq --argjson groupInfo "$(cat SECRETS${ECS_SERVICE})" '.containerDefinitions[0].secrets += $groupInfo' APP${ECS_SERVICE}.json >> APP.json        
         echo "===================================="
         echo "Registering Task definition"
         echo "===================================="
