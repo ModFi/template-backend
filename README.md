@@ -29,6 +29,8 @@ Otherwise remove the files that start with app_ on .github/workflows/ directory
 When a developer makes a commit, they should add a Jira Software issue key to the commit message, like this:
 git commit -m "PROJ-123 add a README file to the project."
 git push origin <branchname>
+  
+also it works for the Pull request if you put the issue /story key on the Pull request title .
 
 
 ## See [Github Actions & Environment Status](https://github.com/ModFi/action-dashboard)
