@@ -1,11 +1,17 @@
-# .github/workflows/issue-on-push.yml
-on: [push]
-name: Create an issue on push
+on: push
+name: Git Creation Demo
 jobs:
-  stuff:
+  gitIssueCreation:
+    name: Git Creation Demo
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: JasonEtco/create-an-issue@v2
+      - uses: actions/checkout@master
+      - name: Git Creation Demo
+        uses: bryannice/gitactions-git-issue-creation@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_COMMIT_SHA: ${{ github.sha }}
+          GITHUB_REPO_OWNER: 'Admin'
+          GITHUB_REPO_NAME: 'Repository'
+          GITHUB_ISSUE_TITLE: 'Update CHANGE_REPO_NAME on the README.md'
+          GITHUB_ISSUE_BODY: 'CHANGE_REPO_NAME has to be replaced for the repository name'
