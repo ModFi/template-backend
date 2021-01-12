@@ -29,3 +29,11 @@ jobs:
           assignees: ${{github.actor}}
           labels: good first issue
           body: Remove the files that start with app_ on .github/workflows/ directory ${{github.sha}}
+      - uses: nashmaniac/create-issue-action@v1.1
+        name: Create Issue Action 4
+        with:
+          title: FRONTEND REPOSITORIES ONLY
+          token: ${{secrets.GITHUB_TOKEN}}
+          assignees: ${{github.actor}}
+          labels: good first issue
+          body: Remove the file issue_on_push.yaml on .github/workflows/ directory ${{github.sha}}
