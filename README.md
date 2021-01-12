@@ -5,6 +5,10 @@
 
 Created automatically using as base the template repository
 
+# Things to do
+
+Replace on the readme file the string CHANGE_REPO_NAME to the repository name.
+
 ## Backend only
 If the application serves the purpose to be a backend-repository please remove 
 from the .github/workflows/ directory all the files that start with front
@@ -19,6 +23,13 @@ https://github.com/ModFi/backend-utils
 
 ## Frontend Only
 Otherwise remove the files that start with app_ on .github/workflows/ directory
+
+
+## Github & Jira integration
+When a developer makes a commit, they should add a Jira Software issue key to the commit message, like this:
+git commit -m "PROJ-123 add a README file to the project."
+git push origin <branchname>
+
 
 ## See [Github Actions & Environment Status](https://github.com/ModFi/action-dashboard)
 Where you find out all the status of the services and their version
