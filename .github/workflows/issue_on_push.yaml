@@ -6,10 +6,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: nashmaniac/create-issue-action@v1.1
-        name: Create Issue Action
+        name: Create Issue Action 1
         with:
-          title: Build Failed
+          title: Update CHANGE_REPO_NAME on the README.md
           token: ${{secrets.GITHUB_TOKEN}}
           assignees: ${{github.actor}}
-          labels: worflow-failed
-          body: Workflow failed for commit ${{github.sha}}
+          labels: good first issue
+          body: CHANGE_REPO_NAME has to be replaced for the repository name
+      - uses: nashmaniac/create-issue-action@v1.1
+        name: Create Issue Action 2
+        with:
+          title: BACKEND REPOSITORIES ONLY
+          token: ${{secrets.GITHUB_TOKEN}}
+          assignees: ${{github.actor}}
+          labels: good first issue
+          body: Remove the files that start with front_ on .github/workflows/ directory also the scripts/ directory and Dockerfile.frontend ${{github.sha}}
+      - uses: nashmaniac/create-issue-action@v1.1
+        name: Create Issue Action 3
+        with:
+          title: FRONTEND REPOSITORIES ONLY
+          token: ${{secrets.GITHUB_TOKEN}}
+          assignees: ${{github.actor}}
+          labels: good first issue
+          body: Remove the files that start with app_ on .github/workflows/ directory ${{github.sha}}
