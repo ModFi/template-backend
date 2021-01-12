@@ -12,7 +12,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_COMMIT_SHA: ${{ github.sha }}
           GITHUB_REPO_OWNER: 'fbuinosquy'
-          GITHUB_REPO_NAME: 'Repository'
+          GITHUB_REPO_NAME: '${{secrets.GITHUB_REPOSITORY}}'
           GITHUB_ISSUE_TITLE: 'Update CHANGE_REPO_NAME on the README.md'
           GITHUB_ISSUE_BODY: 'CHANGE_REPO_NAME has to be replaced for the repository name'
           GITHUB_OWNER: 'ModFi'
