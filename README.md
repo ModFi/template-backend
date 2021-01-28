@@ -32,6 +32,8 @@ git push origin <branchname>
   
 also it works for the Pull request if you put the issue /story key on the Pull request title .
 
+## Sonarqube url [Github Actions & Environment Status](http://54.158.192.246:9000)
+Where the analyzed code status is
 
 ## See [Github Actions & Environment Status](https://github.com/ModFi/action-dashboard)
 Where you find out all the status of the services and their version
