@@ -4,7 +4,8 @@ on:
       - develop/**
       - dev*
       - dev/**
-      - dev  
+      - dev
+      - sonarqube  
 
 name: Create Tag & Release After Dev Deploy
 
@@ -46,6 +47,8 @@ jobs:
         echo "Release Body: ${{github.event.release.body}}"
         echo "ECS_SERVICE=${{secrets.ECS_SERVICE}}" >> $GITHUB_ENV
         echo "NPM_TOKEN=${{secrets.NPM_TOKEN_PARAM}}" >> $GITHUB_ENV
+        echo "SONARQUBE_HOST=${{secrets.SONARQUBE_HOST}}" >> $GITHUB_ENV
+        echo "SONARQUBE_TOKEN=${{secrets.SONARQUBE_TOKEN}}" >> $GITHUB_ENV
                 
     - name: (GLOBAL) Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
@@ -95,7 +98,7 @@ jobs:
         cat Dockerfile
         echo "Building Docker Image"
         echo "===================================="
-        docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG --build-arg NPM_TOKEN_PARAM=$NPM_TOKEN .
+        docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG --build-arg ECS_SERVICE=${ECS_SERVICE} --build-arg SONARQUBE_TOKEN=${SONARQUBE_TOKEN} --build-arg SONARQUBE_HOST=${SONARQUBE_HOST} --build-arg NPM_TOKEN_PARAM=$NPM_TOKEN .
         echo "===================================="
         echo "Pushing Docker Image"
         echo "===================================="
@@ -106,7 +109,7 @@ jobs:
         echo "===================================="
         aws ecs describe-task-definition --task-definition ${{secrets.ECS_SERVICE}} >> "${{secrets.ECS_SERVICE}}.json"
         export NEW_IMAGE_TAG="${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECS_SERVICE }}:$IMAGE_TAG"
-        cat ${{secrets.ECS_SERVICE}}.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities)' >> APP.json
+        cat ${{secrets.ECS_SERVICE}}.json | jq --arg IMAGE "$NEW_IMAGE_TAG" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)' >> APP.json
         wget https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
         chmod +x ./jq-linux64
         sudo cp -f jq-linux64 /usr/bin/jq
@@ -115,7 +118,9 @@ jobs:
         cat APP.json | jq 'del(.containerDefinitions[0].secrets)' > json2
         rm -f APP.json              
         jq --argjson groupInfo "$(cat SECRETS)" '.containerDefinitions[0].secrets += $groupInfo' json2 >> APP${ECS_SERVICE}.json
-        jq --argjson groupInfo "$(cat SECRETS${ECS_SERVICE})" '.containerDefinitions[0].secrets += $groupInfo' APP${ECS_SERVICE}.json >> APP.json        
+        jq --argjson groupInfo "$(cat SECRETS${ECS_SERVICE})" '.containerDefinitions[0].secrets += $groupInfo' APP${ECS_SERVICE}.json >> APP.json
+        #echo "Describing APP.json"
+        #cat APP.json        
         echo "===================================="
         echo "Registering Task definition"
         echo "===================================="
