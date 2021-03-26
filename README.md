@@ -10,7 +10,7 @@ Created automatically using as base the template repository
 Replace on the readme file the string `##REPO##` to the repository name.
 Also, either at `src/Application.ts` or at the swagger config `docs/api/v1/assets/openapi.yaml` you must replace the strings `##SERVICE##` and `##PORT` with the service name and the port (for local development) respectively.  
 
-Also, add to the env variable `API_DOCS_ENABLED` in order to enable swagger docs.  
+Also, add to the env variable `API_DOCS_ENABLED=true` in order to enable swagger docs.  
 
 
 Corresponding to the `NODE_ENV` value in the npm script you're running, differents `.env` files will load. Please refer to `src/Environment.ts` to see how that works.
