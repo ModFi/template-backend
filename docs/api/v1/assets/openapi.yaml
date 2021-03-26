@@ -1,0 +1,57 @@
+openapi: 3.0.0
+info:
+  title: ModFi ##SERVICE## API
+  description: Your description
+  version: '1.0'
+servers:
+  - url: 'http://localhost:##PORT##/##SERVICE##/v1'
+  - url: 'http://##SERVICE##.local:3000/##SERVICE##/v1'
+  - url: 'https://d27isxwnnd5tr8.cloudfront.net/##SERVICE##/v1'
+security:
+  - bearer: [ ]
+paths:
+  /health:
+    get:
+      x-swagger-router-controller: HealthController
+      operationId: healthGet
+      tags:
+        - Health
+      description: >-
+        Returns Health service message
+      responses:
+        '200':
+          description: Successful request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        default:
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Health:
+      type: object
+      properties:
+        msg:
+          type: string
+      required:
+        - msg
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
