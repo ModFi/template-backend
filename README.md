@@ -15,7 +15,7 @@ Also, add to the env variable `API_DOCS_ENABLED` in order to enable swagger docs
 
 Corresponding to the `NODE_ENV` value in the npm script you're running, differents `.env` files will load. Please refer to `src/Environment.ts` to see how that works.
 
-Run `npm install` and then `npm run ts` and test your health endpoint. If your server port locally is other than `3000` please add it to the corresponding `.env` file. 
+Run `npm install` and then `npm run ts` and test your health endpoint. If your server port locally is other than `3000` please add it to the corresponding `.env` file as `SERVER_PORT`. 
 
 #### IMPORTANT !!!
 Do not delete the branchs until you know that it's not going to be deployed on Qa/Prod environments because it deletes the Release Tag too.
