@@ -51,7 +51,7 @@ export class Application {
         `./docs/api/v1/assets/openapi.yaml`
       );
       log.i(spec);
-      if (this.env.get("API_DOCS_ENABLED") === "true") {
+      if (this.env.apiDocs === "true") {
         const swaggerDocument = YAML.load(spec);
 
         app.use(

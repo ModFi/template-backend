@@ -5,7 +5,6 @@ import { BaseMiddleware } from "inversify-express-utils";
 import { NextFunction, Request, RequestHandler, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 
-// @ts-ignore
 @injectable()
 export class Auth extends BaseMiddleware {
   constructor(private env: Environment) {

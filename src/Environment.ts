@@ -47,6 +47,10 @@ export class Environment {
     return getEnv(key);
   }
 
+  get apiDocs(): string {
+    return getEnv("API_DOCS_ENABLED", "false");
+  }
+
   isTest(): boolean {
     return this.qualifier === "test";
   }
